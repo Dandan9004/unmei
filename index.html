@@ -137,7 +137,8 @@ body.pachinko .card.wobble { box-shadow: 0 0 24px var(--gold), 0 0 50px var(--pi
 }
 #pop {
   position: fixed; left: 50%; top: 45%; z-index: 21; pointer-events: none;
-  font-size: clamp(44px, 14vw, 80px); color: var(--gold); text-shadow: 0 0 18px rgba(255, 201, 60, .8), 3px 3px 0 #0E0F1A;
+  font-size: clamp(40px, 13vw, 80px); color: var(--gold); text-shadow: 0 0 18px rgba(255, 201, 60, .8), 4px 4px 0 #0E0F1A;
+  -webkit-text-stroke: 2px #1F2333; paint-order: stroke fill;
   transform: translate(-50%, -50%) scale(0); opacity: 0; white-space: nowrap;
 }
 #pop.show { animation: pop 1s ease-out forwards; }
@@ -155,6 +156,17 @@ body.pachinko .card.wobble { box-shadow: 0 0 24px var(--gold), 0 0 50px var(--pi
 #flash { position: fixed; inset: 0; z-index: 19; pointer-events: none; background: #FFFFFF; opacity: 0; }
 #flash.show { animation: flash .5s ease-out; }
 @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+#bolt { position: fixed; z-index: 22; width: 120px; pointer-events: none; display: none; filter: drop-shadow(0 0 8px #FFE066) drop-shadow(0 0 22px #FFC93C); }
+.bar { position: fixed; left: 0; right: 0; height: 0; z-index: 18; background: #000000; pointer-events: none; transition: height .6s ease-out; }
+#barTop { top: 0; } #barBot { bottom: 0; }
+body.cinema .bar { height: 11dvh; }
+#vignette { position: fixed; inset: 0; z-index: 17; pointer-events: none; opacity: 0; transition: opacity .8s; background: radial-gradient(circle at 50% 45%, transparent 40%, rgba(0, 0, 0, .7) 100%); }
+body.cinema #vignette { opacity: 1; }
+.amida-row .slot { background: var(--tile); color: var(--sub); font-family: 'Dela Gothic One', sans-serif; }
+.amida-row .slot.taken { font-family: 'Zen Maru Gothic', sans-serif; color: #1F2333; }
+.amida-row .slot.turn { box-shadow: 0 0 0 3px var(--accent) inset; }
+line.fresh { animation: rungIn 1.2s ease-out; }
+@keyframes rungIn { 0% { opacity: 0; stroke: #FFC93C; stroke-width: 10; } 30% { opacity: 1; stroke: #FFC93C; stroke-width: 10; } 100% { stroke: currentColor; stroke-width: 3; } }
 
 #result {
   position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 24px;
@@ -234,6 +246,10 @@ body.pachinko .result-card { border: 3px solid var(--gold); box-shadow: 0 0 40px
 <div id="banner" class="display">激アツ!!</div>
 <div id="pop" class="display">ガクン!!</div>
 <div id="flash"></div>
+<div id="vignette"></div>
+<div class="bar" id="barTop"></div>
+<div class="bar" id="barBot"></div>
+<svg id="bolt" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="58,0 36,38 60,40 30,72 54,74 42,100" fill="none" stroke="#FFF7B0" stroke-width="6" stroke-linejoin="miter" vector-effect="non-scaling-stroke"/></svg>
 <div id="result" class="hidden" role="dialog" aria-modal="true" aria-labelledby="winnerName">
   <div class="result-card">
     <span class="label">決定</span>
@@ -298,6 +314,20 @@ const sfx = {
   },
   gakun: () => { tone(110, 0.35, 'sawtooth', 0.12, 0, 45); tone(70, 0.4, 'square', 0.08); },
   suspense: () => { for (let i = 0; i < 4; i++) tone(440 + i * 110, 0.12, 'square', 0.035, i * 0.18); },
+  reverse: () => tone(1600, 0.6, 'sawtooth', 0.05, 0, 150),
+  again: () => { tone(300, 0.5, 'sawtooth', 0.05, 0, 1800); tone(1760, 0.15, 'square', 0.05, 0.5); },
+  rung: () => { tone(1200, 0.08, 'square', 0.05); tone(1600, 0.1, 'square', 0.05, 0.1); },
+  heart: () => { tone(70, 0.18, 'sine', 0.35); tone(58, 0.22, 'sine', 0.3, 0.22); },
+  thunder: () => {
+    if (state.muted) return;
+    const c = audio(); if (!c) return;
+    const len = Math.floor(c.sampleRate * 1.2), buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    src.buffer = buf; f.type = 'lowpass'; f.frequency.value = 1400; g.gain.value = 0.5;
+    src.connect(f).connect(g).connect(c.destination);
+    src.start();
+  },
 };
 function renderMute() {
   const btn = $('#muteBtn');
@@ -368,9 +398,15 @@ function pickWinner() {
   const pool = rigged.length ? rigged : all;
   return pool[randInt(pool.length)];
 }
+const SPECIALS = {
+  roulette: ['pachinko', 'gakun', 'reverse', 'again', 'lightning', 'cinema'],
+  amida: ['pachinko', 'gakun', 'addRungs', 'stopgo', 'lightning', 'cinema'],
+  kuji: ['pachinko', 'gakun', 'lightning', 'cinema'],
+};
 function rollSpecial() {
   if (Math.random() >= 0.4) return null;
-  return Math.random() < 0.5 ? 'pachinko' : 'gakun';
+  const list = SPECIALS[state.mode];
+  return list[randInt(list.length)];
 }
 function showScreen(play) {
   $('#setup').classList.toggle('hidden', play);
@@ -390,6 +426,7 @@ function setBusy(b) {
 }
 function startGame() {
   document.body.classList.remove('pachinko');
+  cinema(false);
   $('#result').classList.add('hidden');
   state.winner = pickWinner();
   state.special = rollSpecial();
@@ -404,6 +441,7 @@ function startGame() {
 $('#backBtn').addEventListener('click', () => {
   if (state.busy) return;
   document.body.classList.remove('pachinko');
+  cinema(false);
   showScreen(false);
 });
 $('#againBtn').addEventListener('click', startGame);
@@ -425,16 +463,46 @@ function flash() {
   const f = $('#flash');
   f.classList.remove('show'); void f.offsetWidth; f.classList.add('show');
 }
-function gakun(text = 'ガクン!!') {
-  const app = $('#app'), p = $('#pop');
+function popText(text) {
+  const p = $('#pop');
   p.textContent = text;
-  app.classList.remove('shake'); p.classList.remove('show');
-  void app.offsetWidth;
-  app.classList.add('shake'); p.classList.add('show');
+  p.classList.remove('show'); void p.offsetWidth; p.classList.add('show');
+}
+function shakeApp() {
+  const app = $('#app');
+  app.classList.remove('shake'); void app.offsetWidth; app.classList.add('shake');
+}
+function gakun(text = 'ガクン!!') {
+  popText(text);
+  shakeApp();
   sfx.gakun();
+}
+let heartTimer = null;
+// Letterbox bars, a dark vignette and a heartbeat until switched off.
+function cinema(on) {
+  document.body.classList.toggle('cinema', on);
+  clearInterval(heartTimer);
+  heartTimer = null;
+  if (on) { sfx.heart(); heartTimer = setInterval(sfx.heart, 900); }
+}
+// A bolt from the top of the screen down to the element (at yFrac of its height), with two flashes.
+async function lightning(el, yFrac = 0.5) {
+  const r = el.getBoundingClientRect(), b = $('#bolt');
+  b.style.left = (r.left + r.width / 2 - 60) + 'px';
+  b.style.top = '0px';
+  b.style.height = Math.max(40, r.top + r.height * yFrac) + 'px';
+  b.style.display = 'block';
+  flash(); sfx.thunder(); shakeApp(); popText('落雷!!');
+  await wait(110);
+  b.style.display = 'none';
+  await wait(70);
+  b.style.display = 'block'; flash();
+  await wait(380);
+  b.style.display = 'none';
 }
 async function finish(w) {
   setBusy(true);
+  cinema(false);
   await wait(500);
   const name = $('#winnerName');
   name.textContent = state.names[w];
@@ -521,20 +589,47 @@ async function spinRoulette() {
   const small = () => clamp(A * rand(0.04, 0.12), 1.2, 6);
   setStatus('', '');
   if (sp === 'pachinko') { await enterPachinko(); setStatus('リーチ…!!'); }
-  if (sp === 'gakun' && n > 1) {
+  // The fake stops first land in the middle of someone else's slice.
+  const fakeStop = async () => {
     const others = [...Array(n).keys()].filter((i) => i !== w);
     const o = others[randInt(others.length)];
     await animRot(rotFor(o * A + A * rand(0.35, 0.65)) + 360 * 5, 5200, easeOutCubic);
     setStatus('決定…？', state.names[o]);
     sfx.suspense();
+  };
+  const jumpToWinner = () => mod(-(w * A + A * rand(0.3, 0.7)) - wheel.R + 180, 360) - 180;
+  if (sp === 'gakun' && n > 1) {
+    await fakeStop();
     await wait(1400);
-    const d = mod(-(w * A + A * rand(0.3, 0.7)) - wheel.R + 180, 360) - 180;
+    const d = jumpToWinner();
     gakun();
     await animRot(wheel.R + d, 280, easeOutBack);
+  } else if (sp === 'lightning' && n > 1) {
+    await fakeStop();
+    await wait(1100);
+    const d = jumpToWinner();
+    await lightning($('.wheel-wrap'), 0.1);
+    await animRot(wheel.R + d, 260, easeOutBack);
+  } else if (sp === 'reverse' && n > 1) {
+    await fakeStop();
+    await wait(900);
+    popText('逆回転!?');
+    sfx.reverse();
+    // Turning backwards raises the pointer's wheel angle, so it reaches the winner's lower edge first.
+    const delta = mod(w * A + small() - mod(-wheel.R, 360), 360) + 360;
+    await animRot(wheel.R - delta, 4200, easeOutCubic);
+  } else if (sp === 'again' && n > 1) {
+    await fakeStop();
+    await wait(1100);
+    popText('まだまだ!!');
+    sfx.again();
+    await animRot(rotFor((w + 1) * A - small()) + 360 * 2, 3800, easeOutCubic);
   } else {
-    const turns = 360 * (sp === 'pachinko' ? 7 : 5);
-    const dur = sp === 'pachinko' ? 8500 : 5200;
-    const ease = sp === 'pachinko' ? easeOutQuint : easeOutCubic;
+    if (sp === 'cinema') { cinema(true); setStatus('……'); }
+    const slow = sp === 'pachinko' || sp === 'cinema';
+    const turns = 360 * (slow ? 7 : 5);
+    const dur = sp === 'cinema' ? 9500 : slow ? 8500 : 5200;
+    const ease = slow ? easeOutQuint : easeOutCubic;
     const r = Math.random();
     if (r < 0.4) {
       await animRot(rotFor((w + 1) * A - small()) + turns, dur, ease);
@@ -552,68 +647,123 @@ async function spinRoulette() {
 }
 
 /* ---------- amida ---------- */
+// Everyone picks a start slot first. Where 当たり sits is only settled when the winner's line is traced,
+// which is why it can follow the winner wherever they chose.
 let amida = null;
 function buildAmida() {
   const n = state.names.length, W = 100 * n, H = 600, L = 10;
-  const x = (c) => 100 * c + 50;
-  const y = (l) => 50 + l * (H - 100) / (L - 1);
   const levels = [];
   for (let l = 0; l < L; l++) {
     const row = [];
     for (let c = 0; c < n - 1; c++) { if (!row.includes(c - 1) && Math.random() < 0.3) row.push(c); }
-    levels.push(row);
+    levels.push({ y: 50 + l * (H - 100) / (L - 1), row });
   }
   for (let c = 0; c < n - 1; c++) {
-    if (levels.some((r) => r.includes(c))) continue;
-    const free = levels.map((_, l) => l).filter((l) => !levels[l].includes(c - 1) && !levels[l].includes(c + 1));
+    if (levels.some((v) => v.row.includes(c))) continue;
+    const free = levels.map((_, l) => l).filter((l) => !levels[l].row.includes(c - 1) && !levels[l].row.includes(c + 1));
     const l = free.length ? free[randInt(free.length)] : randInt(L);
-    levels[l] = levels[l].filter((v) => v !== c - 1 && v !== c + 1);
-    levels[l].push(c);
+    levels[l].row = levels[l].row.filter((v) => v !== c - 1 && v !== c + 1);
+    levels[l].row.push(c);
   }
-  const trace = (col) => {
-    const pts = [[x(col), 0]];
-    levels.forEach((row, l) => {
-      if (row.includes(col - 1)) { pts.push([x(col), y(l)]); col--; pts.push([x(col), y(l)]); }
-      else if (row.includes(col)) { pts.push([x(col), y(l)]); col++; pts.push([x(col), y(l)]); }
-    });
-    pts.push([x(col), H]);
-    return { end: col, pts };
-  };
-  let lines = '';
-  for (let c = 0; c < n; c++) lines += '<line x1="' + x(c) + '" y1="0" x2="' + x(c) + '" y2="' + H + '"/>';
-  levels.forEach((row, l) => row.forEach((c) => { lines += '<line x1="' + x(c) + '" y1="' + y(l) + '" x2="' + x(c + 1) + '" y2="' + y(l) + '"/>'; }));
   const cols = 'grid-template-columns: repeat(' + n + ', minmax(0, 1fr))';
-  const fs = n <= 5 ? 16 : n <= 8 ? 13 : 11;
   $('#stage').innerHTML =
     '<div class="amida">' +
-    '<div class="amida-row" id="amidaNames" style="' + cols + '"></div>' +
+    '<div class="amida-row" id="amidaSlots" style="' + cols + '"></div>' +
     '<svg class="amida-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
-    '<g stroke="currentColor" stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke" style="color: var(--ink)">' +
-    lines.replace(/<line /g, '<line vector-effect="non-scaling-stroke" ') + '</g><g id="amidaPaths"></g></svg>' +
+    '<g id="amidaLines" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color: var(--ink)"></g><g id="amidaPaths"></g></svg>' +
     '<div class="amida-row" id="amidaGoals" style="' + cols + '"></div>' +
     '</div>';
-  const namesRow = $('#amidaNames'), goalsRow = $('#amidaGoals');
-  state.names.forEach((nm, i) => {
+  const fs = n <= 5 ? 16 : n <= 8 ? 13 : 11;
+  for (let k = 0; k < n; k++) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.textContent = nm;
-    b.title = nm;
-    b.style.background = color(i);
+    b.className = 'slot';
+    b.textContent = '？';
     b.style.fontSize = fs + 'px';
-    b.setAttribute('aria-label', nm + 'の線をたどる');
-    b.addEventListener('click', () => traceOne(i));
-    namesRow.appendChild(b);
+    b.setAttribute('aria-label', (k + 1) + '番目の場所');
+    b.addEventListener('click', () => (amida.phase === 'pick' ? pickSlot(k) : traceSlot(k)));
+    $('#amidaSlots').appendChild(b);
     const g = document.createElement('div');
     g.className = 'goal';
     g.textContent = '？';
-    goalsRow.appendChild(g);
-  });
-  amida = { n, H, trace, done: new Set(), win: trace(state.winner).end };
-  setStatus('名前をタップしてたどろう', '');
+    $('#amidaGoals').appendChild(g);
+  }
+  amida = { n, H, levels, picks: Array(n).fill(-1), turn: 0, phase: 'pick', done: new Set() };
+  drawAmidaLines([]);
   const btn = $('#actionBtn');
   btn.classList.remove('hidden');
+  btn.textContent = 'おまかせ';
+  btn.onclick = autoPick;
+  amidaPickTurn();
+}
+const ax = (c) => 100 * c + 50;
+function drawAmidaLines(fresh) {
+  const { n, H, levels } = amida;
+  let s = '';
+  for (let c = 0; c < n; c++) s += '<line vector-effect="non-scaling-stroke" x1="' + ax(c) + '" y1="0" x2="' + ax(c) + '" y2="' + H + '"/>';
+  levels.forEach((v) => v.row.forEach((c) => {
+    const isNew = fresh.some((f) => f.y === v.y && f.c === c);
+    s += '<line vector-effect="non-scaling-stroke"' + (isNew ? ' class="fresh"' : '') + ' x1="' + ax(c) + '" y1="' + v.y + '" x2="' + ax(c + 1) + '" y2="' + v.y + '"/>';
+  }));
+  $('#amidaLines').innerHTML = s;
+}
+function amidaTrace(col) {
+  const pts = [[ax(col), 0]];
+  amida.levels.slice().sort((a, b) => a.y - b.y).forEach((v) => {
+    if (v.row.includes(col - 1)) { pts.push([ax(col), v.y]); col--; pts.push([ax(col), v.y]); }
+    else if (v.row.includes(col)) { pts.push([ax(col), v.y]); col++; pts.push([ax(col), v.y]); }
+  });
+  pts.push([ax(col), amida.H]);
+  return { end: col, pts };
+}
+function amidaPickTurn() {
+  const slots = $('#amidaSlots').children;
+  if (amida.turn >= amida.n) { startTracePhase(); return; }
+  for (const s of slots) s.classList.toggle('turn', !s.classList.contains('taken'));
+  setStatus('場所をえらんでね', state.names[amida.turn]);
+}
+function pickSlot(k) {
+  if (state.busy || amida.phase !== 'pick' || amida.picks[k] >= 0) return;
+  const p = amida.turn, b = $('#amidaSlots').children[k];
+  amida.picks[k] = p;
+  b.textContent = state.names[p];
+  b.title = state.names[p];
+  b.style.background = color(p);
+  b.classList.add('taken');
+  b.setAttribute('aria-label', state.names[p] + 'の線をたどる');
+  sfx.add();
+  amida.turn++;
+  amidaPickTurn();
+}
+function autoPick() {
+  while (amida.phase === 'pick') {
+    const free = amida.picks.map((p, k) => (p < 0 ? k : -1)).filter((k) => k >= 0);
+    pickSlot(free[randInt(free.length)]);
+  }
+}
+async function startTracePhase() {
+  amida.phase = 'trace';
+  for (const s of $('#amidaSlots').children) s.classList.remove('turn');
+  const btn = $('#actionBtn');
   btn.textContent = 'まとめてたどる';
   btn.onclick = traceAll;
+  setStatus('名前をタップしてたどろう', '');
+  if (state.special !== 'addRungs') return;
+  setBusy(true);
+  await wait(600);
+  popText('横線追加!!');
+  shakeApp();
+  sfx.rung();
+  const fresh = [];
+  for (let t = 0; t < 40 && fresh.length < 3; t++) {
+    const c = randInt(amida.n - 1), y = Math.round(rand(70, amida.H - 70));
+    if (amida.levels.some((v) => Math.abs(v.y - y) < 24)) continue;
+    amida.levels.push({ y, row: [c] });
+    fresh.push({ y, c });
+  }
+  drawAmidaLines(fresh);
+  await wait(1200);
+  setBusy(false);
 }
 function partial(pts, len) {
   const out = [pts[0]];
@@ -628,11 +778,10 @@ function partial(pts, len) {
   }
   return out;
 }
-function drawTrace(i, pts, dur) {
+function makeTrace(p) {
   const ns = 'http://www.w3.org/2000/svg';
-  const under = document.createElementNS(ns, 'polyline');
-  const over = document.createElementNS(ns, 'polyline');
-  [[under, '#1F2333', 11], [over, color(i), 7]].forEach(([el, c, wdt]) => {
+  const els = [[ '#1F2333', 11], [color(p), 7]].map(([c, wdt]) => {
+    const el = document.createElementNS(ns, 'polyline');
     el.setAttribute('fill', 'none');
     el.setAttribute('stroke', c);
     el.setAttribute('stroke-width', wdt);
@@ -640,68 +789,91 @@ function drawTrace(i, pts, dur) {
     el.setAttribute('stroke-linejoin', 'round');
     el.setAttribute('vector-effect', 'non-scaling-stroke');
     $('#amidaPaths').appendChild(el);
+    return el;
   });
-  if (document.body.classList.contains('pachinko')) over.style.filter = 'drop-shadow(0 0 6px ' + color(i) + ')';
+  if (document.body.classList.contains('pachinko')) els[1].style.filter = 'drop-shadow(0 0 6px ' + color(p) + ')';
+  return els;
+}
+// Draws the line from fraction `from` to `to` of its length over `dur` ms.
+function animTrace(els, pts, from, to, dur) {
   let total = 0;
   for (let k = 1; k < pts.length; k++) total += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
   return new Promise((res) => {
     const t0 = performance.now();
-    let corners = 0;
+    let corners = partial(pts, total * from).length - 1;
     const f = (now) => {
       const k = Math.min(1, (now - t0) / dur);
-      const p = partial(pts, total * k);
+      const p = partial(pts, total * (from + (to - from) * k));
       const s = p.map((q) => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ');
-      under.setAttribute('points', s);
-      over.setAttribute('points', s);
+      els.forEach((el) => el.setAttribute('points', s));
       if (p.length - 1 > corners) { corners = p.length - 1; if (corners % 2 === 0) sfx.step(); }
       if (k < 1) requestAnimationFrame(f); else res();
     };
     requestAnimationFrame(f);
   });
 }
-async function traceOne(i) {
-  if (state.busy || amida.done.has(i)) return;
+async function traceSlot(k) {
+  if (state.busy || amida.phase !== 'trace' || amida.done.has(k)) return;
   setBusy(true);
-  amida.done.add(i);
-  $('#amidaNames').children[i].disabled = true;
-  const isWin = i === state.winner, sp = isWin ? state.special : null;
-  const { end, pts } = amida.trace(i);
+  amida.done.add(k);
+  $('#amidaSlots').children[k].disabled = true;
+  const p = amida.picks[k], name = state.names[p];
+  const isWin = p === state.winner, sp = isWin ? state.special : null;
+  const { end, pts } = amidaTrace(k);
   if (sp === 'pachinko') await enterPachinko();
-  setStatus(isWin && sp === 'pachinko' ? 'リーチ…!!' : 'たどってます…', state.names[i]);
-  await drawTrace(i, pts, sp === 'pachinko' ? 5000 : 2400);
+  if (sp === 'cinema') cinema(true);
+  const slow = sp === 'pachinko' || sp === 'cinema';
+  setStatus(slow ? 'リーチ…!!' : 'たどってます…', name);
+  const els = makeTrace(p);
+  if (sp === 'stopgo') {
+    await animTrace(els, pts, 0, 0.55, 1400);
+    popText('……!?');
+    sfx.suspense();
+    await wait(1400);
+    popText('ダッシュ!!');
+    sfx.again();
+    await animTrace(els, pts, 0.55, 1, 450);
+  } else {
+    await animTrace(els, pts, 0, 1, slow ? 5000 : 2400);
+  }
   const goal = $('#amidaGoals').children[end];
   if (!isWin) {
     goal.classList.add('lose');
     goal.textContent = 'ハズレ';
     sfx.hazure();
-    setStatus('セーフ！', state.names[i]);
+    setStatus('セーフ！', name);
     setBusy(false);
     return;
   }
   if (sp === 'gakun') {
     goal.classList.add('lose');
     goal.textContent = 'ハズレ';
-    setStatus('セーフ…？', state.names[i]);
+    setStatus('セーフ…？', name);
     sfx.hazure();
     await wait(1300);
     gakun();
     goal.classList.remove('lose');
+  } else if (sp === 'lightning') {
+    setStatus('……', name);
+    await wait(500);
+    await lightning(goal, 0.5);
   } else {
     sfx.suspense();
     await wait(700);
   }
   goal.classList.add('win');
   goal.textContent = '当たり';
-  setStatus('', state.names[i]);
-  finish(i);
+  setStatus('', name);
+  finish(p);
 }
 async function traceAll() {
-  if (state.busy) return;
-  const order = [...Array(amida.n).keys()].filter((i) => i !== state.winner && !amida.done.has(i)).sort(() => Math.random() - 0.5);
-  order.push(state.winner);
-  for (const i of order) {
-    await traceOne(i);
-    if (i !== state.winner) await wait(300);
+  if (state.busy || amida.phase !== 'trace') return;
+  const ws = amida.picks.indexOf(state.winner);
+  const order = [...Array(amida.n).keys()].filter((k) => k !== ws && !amida.done.has(k)).sort(() => Math.random() - 0.5);
+  order.push(ws);
+  for (const k of order) {
+    await traceSlot(k);
+    if (k !== ws) await wait(300);
   }
 }
 
@@ -777,6 +949,17 @@ async function pickCard(card) {
     sfx.hazure();
     await wait(1300);
     gakun();
+  } else if (sp === 'lightning') {
+    card.classList.add('wobble');
+    await wait(700);
+    card.classList.remove('wobble');
+    await lightning(card, 0.5);
+  } else if (sp === 'cinema') {
+    cinema(true);
+    setStatus('……', name);
+    card.classList.add('wobble');
+    await wait(2700);
+    card.classList.remove('wobble');
   } else {
     card.classList.add('wobble');
     sfx.suspense();
