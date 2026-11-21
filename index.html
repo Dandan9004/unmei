@@ -413,12 +413,12 @@ function pickWinner() {
   return pool[randInt(pool.length)];
 }
 const SPECIALS = {
-  roulette: ['pachinko', 'gakun', 'reverse', 'again', 'lightning', 'cinema', 'superReverse', 'morph', 'angel', 'cat', 'ufo', 'rewind', 'allSame'],
-  amida: ['pachinko', 'gakun', 'addRungs', 'stopgo', 'lightning', 'cinema'],
-  kuji: ['pachinko', 'gakun', 'lightning', 'cinema'],
+  roulette: ['pachinko', 'gakun', 'reverse', 'again', 'lightning', 'cinema', 'superReverse', 'morph', 'angel', 'cat', 'ufo', 'rewind', 'allSame', 'retry'],
+  amida: ['pachinko', 'gakun', 'addRungs', 'stopgo', 'lightning', 'cinema', 'retry'],
+  kuji: ['pachinko', 'gakun', 'lightning', 'cinema', 'retry'],
 };
 function rollSpecial() {
-  if (Math.random() >= 0.4) return null;
+  if (Math.random() >= 0.6) return null;
   const list = SPECIALS[state.mode];
   return list[randInt(list.length)];
 }
@@ -816,6 +816,16 @@ async function spinRoulette() {
     await wait(500);
     popText('もう一回!');
     await animRot(rotFor((w + 1) * A - small()) + 360 * 4, 4800, easeOutCubic);
+  } else if (sp === 'retry') {
+    // Lands on the winner, offers a redraw, then lands on them again by a hair.
+    await animRot(rotFor(w * A + A * rand(0.3, 0.7)) + 360 * 5, 5200, easeOutCubic);
+    setStatus('決定…', state.names[w]);
+    await wait(1100);
+    popText('再抽選!!');
+    sfx.again();
+    setStatus(state.names[w] + '、助かるか…!?', '');
+    await wait(1400);
+    await animRot(rotFor((w + 1) * A - small()) + 360 * 5, 6500, easeOutQuint);
   } else if (sp === 'allSame' && n > 1) {
     const o = await fakeStop();
     await wait(1100);
@@ -857,9 +867,8 @@ async function spinRoulette() {
 // Everyone picks a start slot first. Where 当たり sits is only settled when the winner's line is traced,
 // which is why it can follow the winner wherever they chose.
 let amida = null;
-function buildAmida() {
-  const n = state.names.length, W = 100 * n, H = 600, L = 10;
-  const levels = [];
+function makeLevels(n, H) {
+  const L = 10, levels = [];
   for (let l = 0; l < L; l++) {
     const row = [];
     for (let c = 0; c < n - 1; c++) { if (!row.includes(c - 1) && Math.random() < 0.3) row.push(c); }
@@ -872,6 +881,10 @@ function buildAmida() {
     levels[l].row = levels[l].row.filter((v) => v !== c - 1 && v !== c + 1);
     levels[l].row.push(c);
   }
+  return levels;
+}
+function buildAmida() {
+  const n = state.names.length, W = 100 * n, H = 600;
   const cols = 'grid-template-columns: repeat(' + n + ', minmax(0, 1fr))';
   $('#stage').innerHTML =
     '<div class="amida">' +
@@ -895,7 +908,7 @@ function buildAmida() {
     g.textContent = '？';
     $('#amidaGoals').appendChild(g);
   }
-  amida = { n, H, levels, picks: Array(n).fill(-1), turn: 0, phase: 'pick', done: new Set() };
+  amida = { n, H, levels: makeLevels(n, H), picks: Array(n).fill(-1), turn: 0, phase: 'pick', done: new Set() };
   drawAmidaLines([]);
   const btn = $('#actionBtn');
   btn.classList.remove('hidden');
@@ -1043,7 +1056,7 @@ async function traceSlot(k) {
   } else {
     await animTrace(els, pts, 0, 1, slow ? 5000 : 2400);
   }
-  const goal = $('#amidaGoals').children[end];
+  let goal = $('#amidaGoals').children[end];
   if (!isWin) {
     goal.classList.add('lose');
     goal.textContent = 'ハズレ';
@@ -1052,7 +1065,28 @@ async function traceSlot(k) {
     setBusy(false);
     return;
   }
-  if (sp === 'gakun') {
+  if (sp === 'retry') {
+    // 当たり first, then a whole new set of rungs and the winner's line again.
+    goal.classList.add('win');
+    goal.textContent = '当たり';
+    setStatus('当たり…', name);
+    sfx.hazure();
+    await wait(1200);
+    popText('再抽選!!');
+    shakeApp();
+    sfx.again();
+    setStatus(name + '、助かるか…!?', '');
+    amida.levels = makeLevels(amida.n, amida.H);
+    drawAmidaLines(amida.levels.flatMap((v) => v.row.map((c) => ({ y: v.y, c }))));
+    $('#amidaPaths').innerHTML = '';
+    for (const g of $('#amidaGoals').children) { g.className = 'goal'; g.textContent = '？'; }
+    await wait(1400);
+    const again = amidaTrace(k);
+    await animTrace(makeTrace(p), again.pts, 0, 1, 3600);
+    goal = $('#amidaGoals').children[again.end];
+    sfx.suspense();
+    await wait(800);
+  } else if (sp === 'gakun') {
     goal.classList.add('lose');
     goal.textContent = 'ハズレ';
     setStatus('セーフ…？', name);
@@ -1143,7 +1177,26 @@ async function pickCard(card) {
     setBusy(false);
     return;
   }
-  const sp = state.special;
+  const sp = kuji.retried ? null : state.special;
+  if (sp === 'retry') {
+    // 当たり, then every card goes face down again and the winner draws once more.
+    await flipCard(card, cardHtml(name, '当たり', ''), 'win');
+    sfx.hazure();
+    setStatus('', name);
+    await wait(1200);
+    popText('再抽選!!');
+    shakeApp();
+    sfx.again();
+    for (const c of document.querySelectorAll('.card')) {
+      c.className = 'card';
+      c.textContent = '？';
+      c.setAttribute('aria-label', 'カードをめくる');
+    }
+    kuji.retried = true;
+    setStatus(name + '、もう1回チャンス!', name + ' の番');
+    setBusy(false);
+    return;
+  }
   if (sp === 'pachinko') {
     await enterPachinko();
     setStatus('リーチ…!!', name);
